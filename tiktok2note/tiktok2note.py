@@ -604,6 +604,13 @@ def process_url(url: str, settings: Settings, template_text: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to cp1252 and crash printing emoji-laden captions
+    # (UnicodeEncodeError); force UTF-8 so "Created: <path>" always prints.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
     default_template = str(Path(__file__).resolve().parent / DEFAULT_TEMPLATE_FILE)
 
     parser = argparse.ArgumentParser(description="Save a TikTok URL as an Obsidian note")

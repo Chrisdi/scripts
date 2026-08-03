@@ -1,12 +1,20 @@
 ---
-author: "{{author}}"
-created: {{date}}
-posted: {{posted}}
-url: {{expanded_url}}
-isSlideshow: {{isSlideshow}}
-tags: 
 title: "{{title}}"
+url: {{expanded_url}}
+summary: 
+tags: 
+type: video
+author: "{{author}}"
+published: {{posted}}
+created: {{date}}
+last-modified:
+last-seen:
+personalRating:
+subject: 
+last-analysis:  
+isSlideshow: {{isSlideshow}}
 ---
+
 
 
 # Content
