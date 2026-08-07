@@ -1,0 +1,3 @@
+.models/
+.faster-whisper-venv/
+__pycache__/
