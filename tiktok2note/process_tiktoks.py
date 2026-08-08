@@ -3,6 +3,10 @@
 Batch processor: download + transcribe TikTok URLs found in Obsidian markdown
 frontmatter, then append a "## Transcription" section to each file.
 
+With --apply-existing it works fully offline: fresh note templates
+(<date>_<videoId>_<title>.md) are filled from existing
+_tiktok_assets/<videoId>.txt transcripts — no download, no transcription.
+
 Only dependencies:
   - yt-dlp   (system-installed, 2026+ for built-in impersonation)
   - ffmpeg   (for audio extraction)
@@ -97,6 +101,14 @@ def ensure_transcription_section(md_text: str, transcript: str, heading="Transcr
     if pattern.search(md_text):
         return pattern.sub(lambda _: block, md_text, count=1)
     return md_text + ("\n" if not md_text.endswith("\n\n") else "") + block
+
+
+def video_id_from_filename(name: str) -> str | None:
+    """Extract the video ID from a note named <date>_<videoId>_<title>.md
+    (tiktok2note.py's default {{date}}_{{videoId}}_{{title}} title template).
+    Returns None when the name doesn't match the pattern."""
+    m = re.match(r"^\d{4}-\d{2}-\d{2}_(\d{15,25})(?=_|\.md$)", name)
+    return m.group(1) if m else None
 
 
 def tiktok_key(url: str) -> str:
@@ -207,6 +219,10 @@ def process_one(md_path: Path, args, idx: int, total: int):
     print(f"\n[{idx}/{total}] {name} — scanning")
 
     url = extract_url_from_frontmatter(md_path)
+    if args.apply_existing:
+        # Offline re-apply: fill fresh templates from existing transcripts
+        # only — no download, no transcription server.
+        return process_reapply(md_path, args, idx, total, name, url, t_start)
     if not url or "tiktok.com" not in url:
         print(f"[{idx}/{total}] {name} — no TikTok url; skipped")
         return "skipped", 0, 0, 0, time.perf_counter() - t_start
@@ -299,6 +315,62 @@ def process_one(md_path: Path, args, idx: int, total: int):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Offline re-apply (--apply-existing)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def process_reapply(md_path: Path, args, idx: int, total: int, name: str,
+                    url: str | None, t_start: float):
+    """Fill fresh note templates from already-extracted transcripts, offline.
+
+    The video ID is taken from the note filename (<date>_<videoId>_<title>.md,
+    tiktok2note.py's default title template), falling back to the frontmatter
+    URL; the transcript is read from _tiktok_assets/<videoId>.txt.  No
+    download, no transcription server, no network."""
+    flags = frontmatter_flags(md_path)
+    if flags.get("isSlideshow"):
+        print(f"[{idx}/{total}] {name} — slideshow; no audio; skipped")
+        return "skipped", 0, 0, 0, time.perf_counter() - t_start
+    if flags.get("isPrivate"):
+        print(f"[{idx}/{total}] {name} — private video; skipped")
+        return "skipped", 0, 0, 0, time.perf_counter() - t_start
+
+    key = video_id_from_filename(name)
+    if not key and url:
+        key = tiktok_key(url)
+    if not key:
+        print(f"[{idx}/{total}] {name} — no video id in filename or url; skipped")
+        return "skipped", 0, 0, 0, time.perf_counter() - t_start
+
+    local_txt = md_path.parent / args.assets_dirname / f"{key}.txt"
+    if not local_txt.exists():
+        print(f"[{idx}/{total}] {name} — no transcript file {local_txt.name}; skipped")
+        return "skipped", 0, 0, 0, time.perf_counter() - t_start
+
+    md_text = md_path.read_text(encoding="utf-8", errors="ignore")
+    # Same "already has a real transcription" guard as the main path: fresh
+    # notes keep the literal {{transcription}} placeholder, so they are
+    # processed; filled notes are skipped unless --force.
+    if (not args.force) and "{{transcription}}" not in md_text and re.search(
+        r"^##\s*Transcription\s*$", md_text, flags=re.M
+    ):
+        print(f"[{idx}/{total}] {name} — already has Transcription (use --force to redo); skipped")
+        return "skipped", 0, 0, 0, time.perf_counter() - t_start
+
+    t_md = time.perf_counter()
+    transcript = local_txt.read_text(encoding="utf-8").strip()
+    new_md = ensure_transcription_section(md_text, transcript, heading=args.heading)
+    md_path.write_text(new_md, encoding="utf-8")
+    t_md = time.perf_counter() - t_md
+    t_total = time.perf_counter() - t_start
+
+    print(
+        f"[{idx}/{total}] {name} — ✅ applied {local_txt.name}"
+        f" | update {fmt_secs(t_md)} • total {fmt_secs(t_total)}"
+    )
+    return "ok", 0, 0, t_md, t_total
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -314,11 +386,17 @@ def main():
 
     p = argparse.ArgumentParser(
         description="Download+transcribe TikTok URLs found in MD frontmatter"
-        " and append '## Transcription'."
+        " and append '## Transcription'. With --apply-existing, instead"
+        " re-apply existing _tiktok_assets/<videoId>.txt transcripts to fresh"
+        " note templates offline."
     )
     p.add_argument("folder", help="Folder with .md files")
     p.add_argument("--recursive", action="store_true", help="Recurse into subfolders")
     p.add_argument("--force", action="store_true", help="Redo even if transcription exists")
+    p.add_argument("--apply-existing", action="store_true",
+                    help="Offline: re-apply existing _tiktok_assets/<videoId>.txt"
+                         " transcripts to fresh note templates (<date>_<videoId>_<title>.md);"
+                         " no download, no transcription")
     p.add_argument("--heading", default="Transcription")
 
     # Download
@@ -367,6 +445,8 @@ def main():
 
     total = len(md_files)
     print(f"Found {total} .md files in {folder}")
+    if args.apply_existing:
+        print("Mode: --apply-existing (offline re-apply from _tiktok_assets/<videoId>.txt)")
     overall_start = time.perf_counter()
     ok = sk = fail = 0
     tdl = ttr = tmd = ttot = 0.0

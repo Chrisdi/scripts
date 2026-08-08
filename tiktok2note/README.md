@@ -86,6 +86,14 @@ For every `.md` file in the folder (`--recursive` for subfolders):
 5. **Transcribe** — POST the wav to `http://127.0.0.1:8765/transcribe` with `--model small` (default `base`) and `--lang en`. Save the transcript to `_tiktok_assets/<key>.txt`.
 6. **Fill the note** — replace the placeholder under `## Transcription` with the transcript text (`--heading` changes the section name).
 
+**Offline re-apply (`--apply-existing`)** — if the transcripts already exist (`_tiktok_assets/<videoId>.txt`, e.g. from an earlier `tiktok2text.py` run or a previous batch), fresh note templates can be filled without any network access or the Whisper server:
+
+```
+python process_tiktoks.py Tiktoks --apply-existing
+```
+
+The video ID is mapped from the note filename (`<date>_<videoId>_<title>.md`), falling back to the frontmatter `url:`. Notes without a matching transcript file are skipped; the usual skip rules (slideshow/private, already-filled unless `--force`) still apply.
+
 ## Usage reference
 
 ### `tiktok2note.py`
@@ -106,7 +114,7 @@ Template variables: `{{author}}`, `{{date}}`, `{{posted}}`, `{{url}}`, `{{expand
 ### `process_tiktoks.py`
 
 ```
-python process_tiktoks.py <folder> [--recursive] [--force] [--heading H]
+python process_tiktoks.py <folder> [--recursive] [--force] [--apply-existing] [--heading H]
     [--model small|base|tiny|...] [--lang en]
     [--assets-dirname _tiktok_assets] [--global-cache ~/.cache/tiktok2text] [--symlink]
     [--cookies-file FILE] [--limit-rate 1M] [--retries N] [--fragment-retries N] ...
@@ -117,6 +125,7 @@ python process_tiktoks.py <folder> [--recursive] [--force] [--heading H]
 | `<folder>` | — | Folder of `.md` notes to process |
 | `--recursive` | off | Recurse into subfolders |
 | `--force` | off | Re-transcribe even if a transcription already exists |
+| `--apply-existing` | off | Offline re-apply: fill fresh templates from existing `_tiktok_assets/<videoId>.txt` transcripts (no download / transcribe) |
 | `--heading` | `Transcription` | Section heading to fill in the note |
 | `--model` / `--lang` | `base` / `en` | Whisper model and language (server-side; `small` recommended) |
 | `--assets-dirname` | `_tiktok_assets` | Per-note folder for wav/txt |
