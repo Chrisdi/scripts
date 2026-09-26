@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-TikTok to Text — downloads TikTok audio via yt-dlp and transcribes via
-the Faster Whisper Transcriber server (http://127.0.0.1:8765).
+TikTok to Text — downloads TikTok audio via yt-dlp and transcribes it with
+the local transcribe.py script.
 
 Only dependencies:
   - yt-dlp   (system-installed, 2026+ for built-in impersonation)
   - ffmpeg   (for audio extraction)
-  - requests (pip-installable)
-  - Faster Whisper Transcriber server running locally (port 8765)
+    - faster-whisper in the Python environment used to run transcribe.py
 """
 
 import argparse
@@ -17,12 +16,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-
-import requests
-
-
-FASTER_WHISPER_URL = "http://127.0.0.1:8765/transcribe"
-
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -98,36 +91,35 @@ def download_audio(url: str, workdir: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Transcription (API call)
+# Transcription (local script)
 # ---------------------------------------------------------------------------
 
-def transcribe(audio_path: Path, model: str = "base", language: str = "en") -> str:
-    """Send *audio_path* to the Faster Whisper Transcriber server and return the transcript."""
-    with open(audio_path, "rb") as fh:
-        try:
-            r = requests.post(
-                FASTER_WHISPER_URL,
-                files={"audio": (audio_path.name, fh, "audio/wav")},
-                data={"model": model, "language": language},
-                timeout=600,
-            )
-        except requests.exceptions.RequestException as exc:
-            # Covers ConnectionError and ReadTimeout (the server queues jobs
-            # one at a time, so a long queue can outlast the 600s timeout).
-            print(
-                "Faster Whisper Transcriber not reachable or timed out at"
-                f" {FASTER_WHISPER_URL}: {exc}",
-                file=sys.stderr,
-            )
-            sys.exit(4)
+def transcribe(audio_path: Path, args) -> str:
+    """Run transcribe.py and return its stdout transcript."""
+    script = Path(args.transcribe_script).resolve()
+    cmd = [sys.executable, str(script), str(audio_path), args.model]
+    if args.language:
+        cmd += ["-l", args.language]
+    if args.compute_type:
+        cmd += ["-c", args.compute_type]
+    if args.model_dir:
+        cmd += ["--model-dir", str(Path(args.model_dir).expanduser().resolve())]
 
-    if r.status_code != 200:
-        detail = r.text[:500]
-        print(f"Faster Whisper error ({r.status_code}): {detail}", file=sys.stderr)
-        sys.exit(4)
-
-    result = r.json()
-    return result.get("text", "").strip()
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    process = subprocess.Popen(
+        cmd,
+        cwd=str(script.parent),
+        stdout=subprocess.PIPE,
+        env=env,
+        text=True,
+        encoding="utf-8",
+    )
+    output, _ = process.communicate()
+    if process.returncode != 0:
+        print(f"{script.name} failed with exit code {process.returncode}", file=sys.stderr)
+        sys.exit(process.returncode)
+    return (output or "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +137,7 @@ def main():
                 reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(
-        description="TikTok to Text — download audio & transcribe via Faster Whisper Transcriber server"
+        description="TikTok to Text — download audio and transcribe with transcribe.py"
     )
     parser.add_argument("url", help="TikTok URL to transcribe")
     parser.add_argument(
@@ -166,8 +158,20 @@ def main():
         "-o", "--outdir", default=None,
         help="Output directory (default: same directory as this script)",
     )
+    default_transcribe_script = Path(__file__).resolve().parent.parent / "transcribe" / "transcribe.py"
+    parser.add_argument(
+        "--transcribe-script", default=str(default_transcribe_script),
+        help="Path to transcribe.py (default: ../transcribe/transcribe.py)",
+    )
+    parser.add_argument("--compute-type", default=None, help="faster-whisper compute type (default: int8)")
+    parser.add_argument("--model-dir", default=None, help="Model cache directory for faster-whisper")
 
     args = parser.parse_args()
+
+    transcribe_script = Path(args.transcribe_script).expanduser().resolve()
+    if not transcribe_script.is_file():
+        parser.error(f"--transcribe-script not found: {transcribe_script}")
+    args.transcribe_script = str(transcribe_script)
 
     # Photo slideshows have no audio track — nothing to transcribe.
     if "/photo/" in args.url:
@@ -186,8 +190,8 @@ def main():
         base = audio.stem
         outpath = outdir / f"{base}.txt"
 
-        print(f"Transcribing via Faster Whisper ({args.model}) …", file=sys.stderr)
-        text = transcribe(audio, args.model, args.language)
+        print(f"Transcribing via {transcribe_script.name} ({args.model}) …", file=sys.stderr)
+        text = transcribe(audio, args)
 
         outpath.write_text(text + "\n", encoding="utf-8")
         print(text)

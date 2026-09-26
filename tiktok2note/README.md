@@ -2,7 +2,7 @@
 
 TikTok URL to Obsidian note pipeline. 
 
-From a TikTok URL to a formatted Markdown note — caption, hashtags, embed, posted date — plus, for regular videos, a full text transcription via the Faster Whisper Transcriber API, or locally via a faster-whisper `transcribe.py` script (`--transcribe-script`).
+From a TikTok URL to a formatted Markdown note — caption, hashtags, embed, posted date — plus, for regular videos, a full text transcription through the local faster-whisper `transcribe.py` script.
 
 
 ## Pipeline overview
@@ -10,7 +10,7 @@ From a TikTok URL to a formatted Markdown note — caption, hashtags, embed, pos
 | Phase | Script | What it does |
 |---|---|---|
 | 1. Create the note | `tiktok2note.py <url>` | Expands short links, fetches oEmbed metadata, renders `tiktok2note.tpl.md`, writes the note to an output folder |
-| 2. Transcribe | `process_tiktoks.py <folder>` | Reads `url:` from each note's frontmatter, downloads the audio (yt-dlp), transcribes (Faster Whisper API, or a local `transcribe.py` via `--transcribe-script`), fills the note in |
+| 2. Transcribe | `process_tiktoks.py <folder>` | Reads `url:` from each note's frontmatter, downloads audio (yt-dlp), runs `transcribe.py`, and fills in the note |
 
 `tiktok2text.py <url>` is the single-URL variant of phase 2: it writes a bare `<videoId>.txt` transcript next to the script instead of editing notes.
 
@@ -21,9 +21,7 @@ Assumed up and running:
 - **Python 3.10+** with `requests` — `pip install requests`
 - **yt-dlp on PATH** — needs a 2026+ build for built-in impersonation: `winget install yt-dlp.yt-dlp`
 - **ffmpeg on PATH** — `winget install Gyan.FFmpeg`
-- **Faster Whisper Transcriber GUI server** on `http://127.0.0.1:8765` — a separate GUI app (Settings → Server Mode → On → port 8765). Verify with `curl http://127.0.0.1:8765/health`. It processes one job at a time and queues the rest; both transcribe scripts wait up to 600 s per request. Model `small` is available.
-
-Alternatively, **no server needed**: pass `--transcribe-script <path to transcribe.py>` and `process_tiktoks.py` runs that script (from its own directory) to transcribe. Requires **faster-whisper** installed in the Python environment that runs `process_tiktoks.py` (`pip install faster-whisper`, or use the venv from `transcribe/setup_faster_whisper.py`). Models are cached next to the script (`transcribe/.models`), so the whole `transcribe/` folder can be moved anywhere — only the path you pass matters.
+- **faster-whisper** installed in the Python environment used to run the transcription tools — `pip install faster-whisper`, or run `python transcribe/setup_faster_whisper.py` and launch the tools with `transcribe/.faster-whisper-venv/Scripts/python.exe`. Both tools run `../transcribe/transcribe.py` by default; pass `--transcribe-script` to point elsewhere. Models are cached next to `transcribe.py` unless `--model-dir` is set.
 
 ## Workflow: TikTok URL → Markdown note with transcript
 
@@ -37,7 +35,7 @@ python process_tiktoks.py "Tiktoks" --model small
 
 That's it. After step 2 the note has a complete `## Transcription` section. Re-run step 2 any time to process notes added since; already-transcribed notes are skipped (use `--force` to redo).
 
-To transcribe locally instead of via the server:
+To use a `transcribe.py` stored somewhere else:
 
 ```bash
 python process_tiktoks.py "Tiktoks" --model small --transcribe-script ../transcribe/transcribe.py
@@ -93,10 +91,10 @@ For every `.md` file in the folder (`--recursive` for subfolders):
 2. **Skip un-transcribable notes** — frontmatter `isSlideshow: true` or `isPrivate: true` (no download attempted).
 3. **Skip done notes** — if the note already has a real transcription. Fresh notes from step 1 still carry the literal `{{transcription}}` placeholder, so they are *processed*, not skipped (`--force` re-transcribes anything).
 4. **Download audio** — yt-dlp to `~/.cache/tiktok2text/<key>.wav` (a dedup cache keyed by video id — already-downloaded videos are reused across folders), then copy (or `--symlink`) it to `_tiktok_assets/<key>.wav` next to the note.
-5. **Transcribe** — by default POST the wav to `http://127.0.0.1:8765/transcribe` with `--model small` (default `base`) and `--lang en`; with `--transcribe-script <path>` instead run that `transcribe.py` subprocess (cwd = its own base directory) with the same model/language. Save the transcript to `_tiktok_assets/<key>.txt`.
+5. **Transcribe** — run `transcribe.py` as a subprocess with `--model small` (default `base`) and `--lang en`. The default script is `../transcribe/transcribe.py`; `--transcribe-script <path>` overrides it. The subprocess runs with its own directory as its working directory. Save the transcript to `_tiktok_assets/<key>.txt`.
 6. **Fill the note** — replace the placeholder under `## Transcription` with the transcript text (`--heading` changes the section name).
 
-**Offline re-apply (`--apply-existing`)** — if the transcripts already exist (`_tiktok_assets/<videoId>.txt`, e.g. from an earlier `tiktok2text.py` run or a previous batch), fresh note templates can be filled without any network access or the Whisper server:
+**Offline re-apply (`--apply-existing`)** — if the transcripts already exist (`_tiktok_assets/<videoId>.txt`, e.g. from an earlier `tiktok2text.py` run or a previous batch), fresh note templates can be filled without downloading audio or running transcription:
 
 ```
 python process_tiktoks.py Tiktoks --apply-existing
@@ -138,10 +136,10 @@ python process_tiktoks.py <folder> [--recursive] [--force] [--apply-existing] [-
 | `--force` | off | Re-transcribe even if a transcription already exists |
 | `--apply-existing` | off | Offline re-apply: fill fresh templates from existing `_tiktok_assets/<videoId>.txt` transcripts (no download / transcribe) |
 | `--heading` | `Transcription` | Section heading to fill in the note |
-| `--model` / `--lang` | `base` / `en` | Whisper model and language (server-side, or passed to the script in `--transcribe-script` mode; `small` recommended) |
-| `--transcribe-script` | — | Path to `transcribe.py`; when set, transcribe by running that script from its own base directory instead of calling the API. Only the given path is used — the transcribe folder can be moved anywhere |
-| `--compute-type` | `int8` (script default) | faster-whisper compute type; only used with `--transcribe-script` |
-| `--model-dir` | `<script dir>/.models` | Model cache dir; only used with `--transcribe-script` |
+| `--model` / `--lang` | `base` / `en` | Whisper model and language passed to `transcribe.py` (`small` recommended) |
+| `--transcribe-script` | `../transcribe/transcribe.py` | Path to the transcription script; it runs from its own directory, so its model cache follows it when moved |
+| `--compute-type` | `int8` | faster-whisper compute type passed to `transcribe.py` |
+| `--model-dir` | `<script dir>/.models` | Model cache directory passed to `transcribe.py` |
 | `--assets-dirname` | `_tiktok_assets` | Per-note folder for wav/txt |
 | `--global-cache` | `~/.cache/tiktok2text` | Cross-folder audio dedup cache |
 | `--symlink` | off | Symlink cache → assets instead of copying |
@@ -152,9 +150,10 @@ python process_tiktoks.py <folder> [--recursive] [--force] [--apply-existing] [-
 
 ```
 python tiktok2text.py <url> [-m small] [-l en] [-o OUTDIR]
+    [--transcribe-script PATH] [--compute-type T] [--model-dir DIR]
 ```
 
-Transcript-only: downloads the audio and writes `<videoId>.txt` (default: next to the script). Refuses `/photo/` slideshows (exit 2) — they have no audio.
+Transcript-only: downloads the audio, runs `transcribe.py`, and writes `<videoId>.txt` (default: next to the script). Refuses `/photo/` slideshows (exit 2) — they have no audio.
 
 ## Worked example (tested end-to-end)
 
@@ -167,13 +166,13 @@ Created: Tiktoks/2026-08-01_7544261247022255373_Diffusion Models from autoencode
 $ python process_tiktoks.py "Tiktoks" --model small
 [1/1] ...md — downloading → cache/7544261247022255373.wav
 [1/1] ...md — copied audio into _tiktok_assets/
-[1/1] ...md — transcribing via Faster Whisper (small) …
+[1/1] ...md — transcribing via transcribe.py (small) …
 [1/1] ...md — ✅ done | download 12s • transcribe 4m 50s • update 0s • total 5m 03s
 ```
 
 Notes:
 - The wav lives both in `Tiktoks/_tiktok_assets/` and `~/.cache/tiktok2text/` (dedup cache). Deleting the note folder leaves the cache untouched, so re-processing the same video skips the download.
-- A 5-minute clip takes ~5 minutes to transcribe with `small` on CPU — transcription is serial (one job at a time on the server).
+- A 5-minute clip takes ~5 minutes to transcribe with `small` on CPU.
 - The second run skips this note (`already has Transcription`); `--force` re-transcribes.
 
 ## Storage layout
@@ -192,9 +191,8 @@ Tiktoks/
 
 | Symptom | Cause / fix |
 |---|---|
-| `Faster Whisper Transcriber not reachable` (exit 4) | Start the GUI and enable server mode on port 8765; `curl http://127.0.0.1:8765/health` — or switch to local transcription with `--transcribe-script` |
-| `--transcribe-script not found` (exit 2) | The given path doesn't exist; only the script's own directory is used, so the transcribe folder can be anywhere |
-| script mode fails with `failed with exit code 1` | `faster-whisper` isn't importable by the Python running `process_tiktoks.py`, or a model couldn't be loaded/downloaded; the script's own error message is printed just above the failure line |
+| `--transcribe-script not found` | The default `../transcribe/transcribe.py` is missing or the override path doesn't exist |
+| `transcribe.py failed with exit code 1` | `faster-whisper` isn't importable by the Python running the command, or a model couldn't be loaded/downloaded; the script's own error message is printed just above the failure line |
 | `yt-dlp failed; check URL or connection` | URL removed/private or network issue; retry. Private content may need `--cookies-file` (Chrome browser cookies don't work with yt-dlp on Windows — only a cookies.txt file) |
 | Note never gets a transcription | It's a slideshow (`/photo/`) or private video — by design, these are never transcribed |
 | Want to re-transcribe a note | `process_tiktoks.py <folder> --force` |

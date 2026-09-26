@@ -7,18 +7,15 @@ With --apply-existing it works fully offline: fresh note templates
 (<date>_<videoId>_<title>.md) are filled from existing
 _tiktok_assets/<videoId>.txt transcripts — no download, no transcription.
 
-With --transcribe-script <path to transcribe.py> it runs that script as a
-subprocess against the downloaded audio instead of calling the API — no
-server needed. The subprocess runs with the script's own base directory as
-its working directory, and only the given path is relied on, so the
-transcribe folder can live anywhere / be moved freely.
+Transcription uses the neighboring transcribe/transcribe.py script by
+default. Pass --transcribe-script to use a script at another location. The
+subprocess runs with the script's own base directory as its working directory,
+so its model cache follows it when moved.
 
 Only dependencies:
   - yt-dlp   (system-installed, 2026+ for built-in impersonation)
   - ffmpeg   (for audio extraction)
-  - requests (pip-installable)
-  - API mode:      Faster Whisper Transcriber server running locally (port 8765)
-  - script mode:   faster-whisper in the interpreter's env (see transcribe.py)
+    - faster-whisper in the Python environment used to run transcribe.py
 """
 
 import argparse
@@ -31,10 +28,6 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-
-import requests
-
-FASTER_WHISPER_URL = "http://127.0.0.1:8765/transcribe"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -148,35 +141,11 @@ def sh_capture(cmd, cwd=None):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Transcription (API call or --transcribe-script subprocess)
+# Transcription (local script subprocess)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def transcribe(audio_path: Path, model: str = "base", language: str = "en") -> str:
-    """Send *audio_path* to the Faster Whisper Transcriber server and return the transcript."""
-    with open(audio_path, "rb") as fh:
-        try:
-            r = requests.post(
-                FASTER_WHISPER_URL,
-                files={"audio": (audio_path.name, fh, "audio/wav")},
-                data={"model": model, "language": language},
-                timeout=600,
-            )
-        except requests.exceptions.RequestException as exc:
-            # Covers ConnectionError and ReadTimeout (server queues jobs one
-            # at a time, so a long queue can outlast the 600s request timeout).
-            raise RuntimeError(
-                f"Faster Whisper Transcriber not reachable or timed out at {FASTER_WHISPER_URL}: {exc}"
-            ) from exc
-
-    if r.status_code != 200:
-        raise RuntimeError(f"Faster Whisper error ({r.status_code}): {r.text[:500]}")
-
-    result = r.json()
-    return result.get("text", "").strip()
-
-
 def transcribe_via_script(audio_path: Path, args) -> str:
-    """Run transcribe.py (--transcribe-script) on *audio_path* and return the text.
+    """Run transcribe.py on *audio_path* and return its stdout transcript.
 
     The subprocess runs with the script's own base directory as cwd, so the
     script's relative model cache follows it wherever it lives. Only the
@@ -203,13 +172,6 @@ def transcribe_via_script(audio_path: Path, args) -> str:
         # transcribe.py's own error message was already shown on stderr.
         raise RuntimeError(f"{script.name} failed with exit code {p.returncode}")
     return (out or "").strip()
-
-
-def transcribe_audio(audio_path: Path, args) -> str:
-    """Dispatch to the API or the --transcribe-script subprocess."""
-    if args.transcribe_script:
-        return transcribe_via_script(audio_path, args)
-    return transcribe(audio_path, args.model, args.lang)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -265,7 +227,7 @@ def process_one(md_path: Path, args, idx: int, total: int):
     url = extract_url_from_frontmatter(md_path)
     if args.apply_existing:
         # Offline re-apply: fill fresh templates from existing transcripts
-        # only — no download, no transcription server.
+        # only — no download or transcription.
         return process_reapply(md_path, args, idx, total, name, url, t_start)
     if not url or "tiktok.com" not in url:
         print(f"[{idx}/{total}] {name} — no TikTok url; skipped")
@@ -326,17 +288,17 @@ def process_one(md_path: Path, args, idx: int, total: int):
             shutil.copy2(cache_wav, local_wav)
             print(f"[{idx}/{total}] {name} — copied audio into {assets_dir.name}/")
 
-    # ── Transcribe (API or --transcribe-script) ─────────────────────────
+    # ── Transcribe ──────────────────────────────────────────────────────
     t_tr = 0.0
     if local_txt.exists() and not args.force:
         transcript = local_txt.read_text(encoding="utf-8").strip()
         print(f"[{idx}/{total}] {name} — reused existing transcript file")
     else:
-        engine = Path(args.transcribe_script).name if args.transcribe_script else "Faster Whisper"
+        engine = Path(args.transcribe_script).name
         print(f"[{idx}/{total}] {name} — transcribing via {engine} ({args.model}) …")
         tr_start = time.perf_counter()
         try:
-            transcript = transcribe_audio(local_wav, args)
+            transcript = transcribe_via_script(local_wav, args)
         except RuntimeError as e:
             print(f"[{idx}/{total}] {name} — {e}")
             return "failed", t_dl, 0, 0, time.perf_counter() - t_start
@@ -370,7 +332,7 @@ def process_reapply(md_path: Path, args, idx: int, total: int, name: str,
     The video ID is taken from the note filename (<date>_<videoId>_<title>.md,
     tiktok2note.py's default title template), falling back to the frontmatter
     URL; the transcript is read from _tiktok_assets/<videoId>.txt.  No
-    download, no transcription server, no network."""
+    download, transcription, or network."""
     flags = frontmatter_flags(md_path)
     if flags.get("isSlideshow"):
         print(f"[{idx}/{total}] {name} — slideshow; no audio; skipped")
@@ -467,25 +429,17 @@ def main():
     p.add_argument("--symlink", action="store_true",
                     help="Symlink cache -> local assets (instead of copy)")
 
-    # Transcription (Faster Whisper Transcriber)
+    # Transcription
     p.add_argument("--model", default="base",
                     help="tiny|tiny.en|base|base.en|small|small.en|medium|medium.en|large-v3|large-v3-turbo")
     p.add_argument("--lang", default="en")
-    p.add_argument("--transcribe-script", default=None,
-                    help="Path to transcribe/transcribe.py; when set, run that"
-                         " script from its own base directory (cwd = script dir)"
-                         " against the audio instead of calling the Faster Whisper"
-                         " API. Only the given path is used, so the transcribe"
-                         " folder can live anywhere")
-
-    # Backward-compat flags (no-ops unless --transcribe-script is used)
-    p.add_argument("--venv-dir", help="Ignored (no venv needed)")
+    default_transcribe_script = Path(__file__).resolve().parent.parent / "transcribe" / "transcribe.py"
+    p.add_argument("--transcribe-script", default=str(default_transcribe_script),
+                    help="Path to transcribe.py (default: ../transcribe/transcribe.py)")
     p.add_argument("--model-dir",
-                    help="Model cache dir for faster-whisper; only used with"
-                         " --transcribe-script (the API server manages its own models)")
+                    help="Model cache directory for faster-whisper")
     p.add_argument("--compute-type",
-                    help="faster-whisper compute type; only used with"
-                         " --transcribe-script (default int8)")
+                    help="faster-whisper compute type (default: int8)")
 
     args = p.parse_args()
     folder = Path(args.folder).expanduser().resolve()
@@ -493,7 +447,7 @@ def main():
         print(f"Folder not found: {folder}", file=sys.stderr)
         sys.exit(2)
 
-    if args.transcribe_script:
+    if not args.apply_existing:
         ts = Path(args.transcribe_script).expanduser().resolve()
         if not ts.is_file():
             print(f"--transcribe-script not found: {ts}", file=sys.stderr)
@@ -509,8 +463,8 @@ def main():
     print(f"Found {total} .md files in {folder}")
     if args.apply_existing:
         print("Mode: --apply-existing (offline re-apply from _tiktok_assets/<videoId>.txt)")
-    elif args.transcribe_script:
-        print(f"Mode: transcribe via script {args.transcribe_script} (cwd = its base dir)")
+    else:
+        print(f"Transcriber: {args.transcribe_script} (cwd = its base dir)")
     overall_start = time.perf_counter()
     ok = sk = fail = 0
     tdl = ttr = tmd = ttot = 0.0
