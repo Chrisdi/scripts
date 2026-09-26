@@ -7,7 +7,7 @@ Usage:
 
 Example:
     python transcribe.py speech.wav base
-    python transcribe.py speech.wav small --language en --output out.txt
+    python transcribe.py speech.wav medium --language en --output out.txt
 
 Requires faster-whisper to be installed (see setup_faster_whisper.py).
 """

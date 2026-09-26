@@ -1,0 +1,11 @@
+# Core source-resolution dependencies
+requests>=2.31
+beautifulsoup4>=4.12
+feedparser>=6.0
+youtube-transcript-api>=1.2
+
+# Final local fallback; omit if your existing faster-whisper environment is reused.
+faster-whisper>=1.1
+
+# Optional: install separately when --allow-youtube-audio is needed.
+# yt-dlp>=2025.1
