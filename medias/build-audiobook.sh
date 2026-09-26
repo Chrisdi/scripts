@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# make_audiobook.sh - Combine M4A files into a single M4B audiobook with chapters
+# build-audiobook.sh - Combine M4A files into a single M4B audiobook with chapters
 #
-# Usage: ./make_audiobook.sh <input_dir> <file_pattern> <title> <author> [output_file]
+# Usage: ./build-audiobook.sh <input_dir> <file_pattern> <title> <author> [output_file]
 #
-# Example: ./make_audiobook.sh ./chapters "*.m4a" "The Great Book" "Jane Doe"
+# Example: ./build-audiobook.sh ./chapters "*.m4a" "The Great Book" "Jane Doe"
 #
 
 set -euo pipefail
