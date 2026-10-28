@@ -53,16 +53,15 @@ def ensure_venv(venv_path: Path) -> Path:
             stdout=subprocess.DEVNULL,
         )
 
-    result = subprocess.run([str(python_exe), "-c", "import faster_whisper"], capture_output=True)
-    if result.returncode != 0:
-        print("Installing faster-whisper...")
-        subprocess.run(
-            [str(python_exe), "-m", "pip", "install", "-q", "faster-whisper>=1.0.0"],
-            check=True,
-        )
-        print("faster-whisper installed successfully")
-    else:
-        print("faster-whisper is already installed")
+    print("Ensuring compatible faster-whisper dependencies are installed...")
+    subprocess.run(
+        [
+            str(python_exe), "-m", "pip", "install", "-q",
+            "faster-whisper>=1.0.0", "av<19",
+        ],
+        check=True,
+    )
+    print("faster-whisper dependencies are ready")
 
     return python_exe
 

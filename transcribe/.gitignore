@@ -1,3 +1,4 @@
 .models/
 .faster-whisper-venv/
+.venv/
 __pycache__/
