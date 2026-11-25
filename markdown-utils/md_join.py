@@ -2,7 +2,9 @@
 """Join Markdown files, keeping their frontmatter in a separate file."""
 
 import argparse
+import glob
 from pathlib import Path
+import re
 
 
 def split_frontmatter(content, file_path):
@@ -22,6 +24,27 @@ def split_frontmatter(content, file_path):
             return "".join(lines[index + 1:]), "".join(lines[1:index])
 
     raise ValueError(f"Unclosed frontmatter in '{file_path}'")
+
+
+def natural_sort_key(path):
+    """Return a sort key that orders numeric filename segments naturally."""
+    path_text = str(path)
+    parts = tuple(
+        (1, int(part)) if part.isdigit() else (0, part.casefold())
+        for part in re.split(r"(\d+)", path_text)
+    )
+    return parts, path_text.casefold(), path_text
+
+
+def expand_input_files(file_patterns):
+    """Expand each input pattern in place, naturally sorting its matches."""
+    input_paths = []
+    for pattern in file_patterns:
+        matches = glob.glob(pattern)
+        if not matches:
+            raise ValueError(f"No files match '{pattern}'")
+        input_paths.extend(Path(path) for path in sorted(matches, key=natural_sort_key))
+    return input_paths
 
 
 def join_markdown(output_path, input_paths):
@@ -60,14 +83,21 @@ def join_markdown(output_path, input_paths):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Join Markdown files and collect their frontmatter separately."
+        description=(
+            "Join Markdown files and collect their frontmatter separately. "
+            "Glob matches are naturally sorted."
+        )
     )
     parser.add_argument("-o", "--output", required=True, help="Output Markdown file")
-    parser.add_argument("files", nargs="+", help="Markdown files to join, in order")
+    parser.add_argument(
+        "files",
+        nargs="+",
+        help="Markdown files or glob patterns to join, in order",
+    )
     args = parser.parse_args()
 
     try:
-        join_markdown(args.output, args.files)
+        join_markdown(args.output, expand_input_files(args.files))
     except (OSError, ValueError) as error:
         parser.error(str(error))
 

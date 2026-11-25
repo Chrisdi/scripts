@@ -21,5 +21,6 @@ python md_join.py -o combined.md chapter1.md chapter2.md
 ```
 
 `md_join.py` joins the files in the given order, removing YAML frontmatter from
-the joined document. It writes the collected frontmatter, labeled by source
-filename, to `combined-frontmatter.md`.
+the joined document. Glob patterns are supported and their matches are sorted
+in natural order (for example, `1.md`, `2.md`, `10.md`). It writes the
+collected frontmatter, labeled by source filename, to `combined-frontmatter.md`.
